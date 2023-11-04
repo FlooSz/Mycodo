@@ -1,6 +1,6 @@
 # coding=utf-8
 import copy
-
+import time
 from mycodo.inputs.base_input import AbstractInput
 from mycodo.inputs.sensorutils import calculate_dewpoint
 from mycodo.inputs.sensorutils import calculate_vapor_pressure_deficit
@@ -66,16 +66,19 @@ class InputModule(AbstractInput):
             self.try_initialize()
 
     def initialize(self):
+        import board
+        import adafruit_shtc3
         import adafruit_shtc3
         from adafruit_extended_bus import ExtendedI2C
 
         try:
-            self.sensor = adafruit_shtc3.SHTC3(
-                ExtendedI2C(self.input_dev.i2c_bus))
-        except:
-            self.logger.exception("Setting up sensor")
+            i2c = board.STEMMA_I2C()
+            self.sensor = adafruit_shtc3.SHTC3(ExtendedI2C(i2c))
+        except Exception as e:
+            self.logger.exception("Fehler beim Einrichten des Sensors: %s", str(e))
+            return
 
-    def get_measurement(self):
+def get_measurement(self):
         if not self.sensor:
             self.logger.error("Error 101: Device not set up. See https://kizniche.github.io/Mycodo/Error-Codes#error-101 for more info.")
             return
@@ -91,13 +94,13 @@ class InputModule(AbstractInput):
         if self.is_enabled(0):
             self.value_set(0, temperature)
 
-        if self.is_enabled(1):
+        if self is_enabled(1):
             self.value_set(1, relative_humidity)
 
         if self.is_enabled(2) and self.is_enabled(0) and self.is_enabled(1):
-            self.value_set(2, calculate_dewpoint(self.value_get(0), self.value_get(1)))
+            self.value_set(2, calculate_dewpoint(self.value_get(0), self.value_get(1))
 
         if self.is_enabled(3) and self.is_enabled(0) and self.is_enabled(1):
-            self.value_set(3, calculate_vapor_pressure_deficit(self.value_get(0), self.value_get(1)))
+            self.value_set(3, calculate_vapor_pressure_deficit(self.value_get(0), self.value_get(1))
 
         return self.return_dict
