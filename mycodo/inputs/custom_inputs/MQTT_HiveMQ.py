@@ -66,7 +66,7 @@ INPUT_INFORMATION = {
         {
             'id': 'mqtt_port',
             'type': 'integer',
-            'default_value': 1883,
+            'default_value': 8883,
             'required': True,
             'name': TRANSLATIONS["port"]["title"],
             'phrase': TRANSLATIONS["port"]["phrase"]
