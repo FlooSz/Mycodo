@@ -175,7 +175,7 @@ class InputModule(AbstractInput):
             self.try_initialize()
 
     def initialize(self):
-        import paho.mqtt.client as mqtt
+        import paho.mqtt.client as paho
 
         self.log_level_debug = self.input_dev.log_level_debug
 
