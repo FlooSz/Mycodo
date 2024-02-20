@@ -175,29 +175,31 @@ class InputModule(AbstractInput):
             self.try_initialize()
 
     def initialize(self):
-        import paho.mqtt.client as paho
-        import time
-        import ssl
+    import paho.mqtt.client as mqtt
+    import time
+    import ssl
 
-        self.log_level_debug = self.input_dev.log_level_debug
+    self.log_level_debug = self.input_dev.log_level_debug
 
-        input_channels = db_retrieve_table_daemon(
-            InputChannel).filter(InputChannel.input_id == self.input_dev.unique_id).all()
-        self.options_channels = self.setup_custom_channel_options_json(
-            INPUT_INFORMATION['custom_channel_options'], input_channels)
+    input_channels = db_retrieve_table_daemon(
+        InputChannel).filter(InputChannel.input_id == self.input_dev.unique_id).all()
+    self.options_channels = self.setup_custom_channel_options_json(
+        INPUT_INFORMATION['custom_channel_options'], input_channels)
 
-        self.client = mqtt.Client(
-            self.mqtt_clientid,
-            transport='websockets' if self.mqtt_use_websockets else 'tcp')
-        self.logger.debug(f"Client created with ID {self.mqtt_clientid}")
-        if self.mqtt_login:
-            if not self.mqtt_password:
-                self.mqtt_password = None
-            self.logger.debug("Sending username and password credentials")
-            self.client.username_pw_set(self.mqtt_username, self.mqtt_password)
-        if self.mqtt_use_tls:
-            self.client.tls_set(tls_version=mqtt.client.ssl.PROTOCOL_TLS
-                self.mqtt_port = 8883)
+    self.client = mqtt.Client(
+        self.mqtt_clientid,
+        transport='websockets' if self.mqtt_use_websockets else 'tcp')
+    self.logger.debug(f"Client created with ID {self.mqtt_clientid}")
+    if self.mqtt_login:
+        if not self.mqtt_password:
+            self.mqtt_password = None
+        self.logger.debug("Sending username and password credentials")
+        self.client.username_pw_set(self.mqtt_username, self.mqtt_password)
+    if self.mqtt_use_tls:
+        self.client.tls_set(tls_version=ssl.PROTOCOL_TLS)
+        if self.mqtt_port is None:
+            self.mqtt_port = 8883 # Standardport for HiveMQ
+        self.logger.debug(f"Setting MQTT port to {self.mqtt_port}")
 
     def listener(self):
         try:
