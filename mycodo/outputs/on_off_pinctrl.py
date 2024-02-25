@@ -1,6 +1,6 @@
 # coding=utf-8
 #
-# on_off_gpio.py - Output for simple GPIO switching
+# on_off_pinctrl.py - Output for simple GPIO switching using pinctrl
 #
 from flask_babel import lazy_gettext
 
@@ -8,6 +8,7 @@ from mycodo.databases.models import OutputChannel
 from mycodo.outputs.base_output import AbstractOutput
 from mycodo.utils.constraints_pass import constraints_pass_positive_or_zero_value
 from mycodo.utils.database import db_retrieve_table_daemon
+from mycodo.utils.system_pi import cmd_output
 
 # Measurements
 measurements_dict = {
@@ -26,9 +27,9 @@ channels_dict = {
 
 # Output information
 OUTPUT_INFORMATION = {
-    'output_name_unique': 'wired',
-    'output_name': "{}: Raspberry Pi GPIO (Pi <= 4)".format(lazy_gettext('On/Off')),
-    'output_library': 'RPi.GPIO',
+    'output_name_unique': 'output_on_off_pinctrl',
+    'output_name': "{}: Raspberry Pi GPIO (Pi 5)".format(lazy_gettext('On/Off')),
+    'output_library': 'pinctrl',
     'measurements_dict': measurements_dict,
     'channels_dict': channels_dict,
     'output_types': ['on_off'],
@@ -41,10 +42,6 @@ OUTPUT_INFORMATION = {
         'button_send_duration'
     ],
     'options_disabled': ['interface'],
-
-    'dependencies_module': [
-        ('pip-pypi', 'RPi.GPIO', 'RPi.GPIO==0.7.1')
-    ],
 
     'interfaces': ['GPIO'],
 
@@ -115,34 +112,31 @@ class OutputModule(AbstractOutput):
     def __init__(self, output, testing=False):
         super().__init__(output, testing=testing, name=__name__)
 
-        self.GPIO = None
-
         output_channels = db_retrieve_table_daemon(
             OutputChannel).filter(OutputChannel.output_id == self.output.unique_id).all()
         self.options_channels = self.setup_custom_channel_options_json(
             OUTPUT_INFORMATION['custom_channel_options'], output_channels)
 
     def initialize(self):
-        import RPi.GPIO as GPIO
-
-        self.GPIO = GPIO
-
         self.setup_output_variables(OUTPUT_INFORMATION)
 
         if self.options_channels['pin'][0] is None:
             self.logger.error("Pin must be set")
         else:
-
             try:
                 if self.options_channels['state_startup'][0]:
                     startup_state = self.options_channels['on_state'][0]
                 else:
                     startup_state = not self.options_channels['on_state'][0]
 
-                self.GPIO.setmode(self.GPIO.BCM)
-                self.GPIO.setwarnings(True)
-                self.GPIO.setup(self.options_channels['pin'][0], self.GPIO.OUT)
-                self.GPIO.output(self.options_channels['pin'][0], startup_state)
+                if startup_state:
+                    cmd = f"pinctrl set {self.options_channels['pin'][0]} op dh"
+                else:
+                    cmd = f"pinctrl set {self.options_channels['pin'][0]} op dl"
+                cmd_return, cmd_error, cmd_status = cmd_output(cmd, user="root")
+                self.logger.debug(
+                    f"GPIO {self.options_channels['pin'][0]} setup with '{cmd}': "
+                    f"Status: {cmd_status}, Return: {cmd_return}, Error: {cmd_error}")
                 self.output_setup = True
 
                 if self.options_channels['trigger_functions_startup'][0]:
@@ -168,11 +162,26 @@ class OutputModule(AbstractOutput):
     def output_switch(self, state, output_type=None, amount=None, output_channel=0):
         try:
             if state == 'on':
-                self.GPIO.output(self.options_channels['pin'][output_channel],
-                                 self.options_channels['on_state'][output_channel])
+                if self.options_channels['on_state'][output_channel]:
+                    set_opt = "dh"
+                else:
+                    set_opt = "dl"
+                cmd = f"pinctrl set {self.options_channels['pin'][0]} {set_opt}"
+                cmd_return, cmd_error, cmd_status = cmd_output(cmd, user="root")
+                self.logger.debug(
+                    f"GPIO {self.options_channels['pin'][0]} set ON with '{cmd}': "
+                    f"Status: {cmd_status}, Return: {cmd_return}, Error: {cmd_error}")
             elif state == 'off':
-                self.GPIO.output(self.options_channels['pin'][output_channel],
-                                 not self.options_channels['on_state'][output_channel])
+                if not self.options_channels['on_state'][output_channel]:
+                    set_opt = "dh"
+                else:
+                    set_opt = "dl"
+                cmd = f"pinctrl set {self.options_channels['pin'][0]} {set_opt}"
+                cmd_return, cmd_error, cmd_status = cmd_output(cmd, user="root")
+                self.logger.debug(
+                    f"GPIO {self.options_channels['pin'][0]} set OFF with '{cmd}': "
+                    f"Status: {cmd_status}, Return: {cmd_return}, Error: {cmd_error}")
+
             msg = "success"
         except Exception as e:
             msg = "State change error: {}".format(e)
@@ -182,9 +191,16 @@ class OutputModule(AbstractOutput):
     def is_on(self, output_channel=0):
         if self.is_setup():
             try:
-                return self.options_channels['on_state'][output_channel] == self.GPIO.input(
-                    self.options_channels['pin'][output_channel])
+                cmd_return, cmd_error, cmd_status = cmd_output(
+                    f"pinctrl get {self.options_channels['pin'][0]}", user="root")
+                if "hi" in cmd_return.decode() and self.options_channels['on_state'][output_channel]:
+                    return True
+                elif "lo" in cmd_return.decode() and not self.options_channels['on_state'][output_channel]:
+                    return True
+                else:
+                    return False
             except Exception as e:
+                self.logger.exception(1)
                 self.logger.error("Status check error: {}".format(e))
 
     def is_setup(self):
