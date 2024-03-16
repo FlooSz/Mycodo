@@ -23,7 +23,9 @@ jobs:
           sudo apt-spy2 fix --commit --launchpad --country=US
       - name: Install dependencies
         run: |
-          sudo apt-get update ; sudo apt-get clean ; sudo apt-get autoremove ; sudo apt-get install libuv1-dev
+          sudo apt-get update ; sudo apt-get clean ; sudo apt-get autoremove ; sudo apt-get install libuv1-dev ; sudo apt --fix-broken install ; sudo apt-get update && sudo apt-get upgrade
+          sudo dpkg --configure -a
+          sudo apt-get install -f
           sudo bash mycodo/scripts/upgrade_commands.sh update-apt
           sudo apt install -y libatlas-base-dev libboost-python-dev gawk git libffi-dev libi2c-dev nginx python3-dev sqlite3 swig
           sudo bash mycodo/scripts/upgrade_commands.sh update-packages
