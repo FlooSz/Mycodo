@@ -1,21 +1,22 @@
 # coding=utf-8
 #
-# pwm_gpio.py - Output for GPIO PWM
+# pwm_mqtt.py - Output for publishing PWM via MQTT
 #
 import copy
 
 from flask_babel import lazy_gettext
 from sqlalchemy import and_
 
-from mycodo.databases.models import DeviceMeasurements, OutputChannel
+from mycodo.databases.models import DeviceMeasurements
+from mycodo.databases.models import OutputChannel
 from mycodo.outputs.base_output import AbstractOutput
-from mycodo.utils.constraints_pass import (
-    constraints_pass_positive_or_zero_value, constraints_pass_positive_value)
+from mycodo.utils.constraints_pass import constraints_pass_positive_or_zero_value
 from mycodo.utils.database import db_retrieve_table_daemon
-from mycodo.utils.influx import add_measurements_influxdb, read_influxdb_single
+from mycodo.utils.influx import add_measurements_influxdb
+from mycodo.utils.influx import read_influxdb_single
 from mycodo.utils.system_pi import return_measurement_info
+from mycodo.utils.utils import random_alphanumeric
 
-# Measurements
 measurements_dict = {
     0: {
         'measurement': 'duty_cycle',
@@ -30,26 +31,22 @@ channels_dict = {
     }
 }
 
-# Output information
 OUTPUT_INFORMATION = {
-    'output_name_unique': 'pwm',
-    'output_name': "{}: Raspberry Pi GPIO (Pi <= 4)".format(lazy_gettext('PWM')),
-    'output_library': 'pigpio',
+    'output_name_unique': 'MQTT_PAHO_PWM',
+    'output_name': "{}: MQTT Publish".format(lazy_gettext('PWM')),
+    'output_library': 'paho-mqtt',
+    'output_manufacturer': 'Mycodo',
     'measurements_dict': measurements_dict,
     'channels_dict': channels_dict,
     'output_types': ['pwm'],
 
-    'message': 'See the PWM section of the manual for PWM information and determining which '
-               'pins may be used for each library option.',
+    'url_additional': 'http://www.eclipse.org/paho/',
 
-    'options_disabled': ['interface'],
+    'message': 'Publish a PWM value to an MQTT server.',
 
     'dependencies_module': [
-        ('internal', 'file-exists /opt/Mycodo/pigpio_installed', 'pigpio'),
-        ('pip-pypi', 'pigpio', 'pigpio==1.78')
+        ('pip-pypi', 'paho', 'paho-mqtt==1.5.1')
     ],
-
-    'interfaces': ['GPIO'],
 
     'custom_commands': [
         {
@@ -73,13 +70,76 @@ OUTPUT_INFORMATION = {
 
     'custom_channel_options': [
         {
-            'id': 'pin',
+            'id': 'hostname',
+            'type': 'text',
+            'default_value': 'localhost',
+            'required': True,
+            'name': lazy_gettext('Hostname'),
+            'phrase': 'The hostname of the MQTT server'
+        },
+        {
+            'id': 'port',
             'type': 'integer',
-            'default_value': None,
-            'required': False,
+            'default_value': 1883,
+            'required': True,
+            'name': lazy_gettext('Port'),
+            'phrase': 'The port of the MQTT server'
+        },
+        {
+            'id': 'topic',
+            'type': 'text',
+            'default_value': 'paho/test/single',
+            'required': True,
+            'name': 'Topic',
+            'phrase': 'The topic to publish with'
+        },
+        {
+            'id': 'keepalive',
+            'type': 'integer',
+            'default_value': 60,
+            'required': True,
             'constraints_pass': constraints_pass_positive_or_zero_value,
-            'name': "{}: {} ({})".format(lazy_gettext('Pin'), lazy_gettext('GPIO'), lazy_gettext('BCM')),
-            'phrase': lazy_gettext('The pin to control the state of')
+            'name': lazy_gettext('Keep Alive'),
+            'phrase': 'The keepalive timeout value for the client. Set to 0 to disable.'
+        },
+        {
+            'id': 'clientid',
+            'type': 'text',
+            'default_value': 'client_{}'.format(random_alphanumeric(8)),
+            'required': True,
+            'name': 'Client ID',
+            'phrase': 'Unique client ID for connecting to the MQTT server'
+        },
+        {
+            'id': 'login',
+            'type': 'bool',
+            'default_value': False,
+            'name': 'Use Login',
+            'phrase': 'Send login credentials'
+        },
+        {
+            'id': 'username',
+            'type': 'text',
+            'default_value': 'user',
+            'required': False,
+            'name': lazy_gettext('Username'),
+            'phrase': 'Username for connecting to the server'
+        },
+        {
+            'id': 'password',
+            'type': 'text',
+            'default_value': '',
+            'required': False,
+            'name': lazy_gettext('Password'),
+            'phrase': 'Password for connecting to the server.'
+        },
+        {
+            'id': 'mqtt_use_websockets',
+            'type': 'bool',
+            'default_value': False,
+            'required': False,
+            'name': 'Use Websockets',
+            'phrase': 'Use websockets to connect to the server.'
         },
         {
             'id': 'state_startup',
@@ -123,26 +183,6 @@ OUTPUT_INFORMATION = {
             'phrase': 'The value when Mycodo shuts down'
         },
         {
-            'id': 'pwm_library',
-            'type': 'select',
-            'default_value': 'pigpio_any',
-            'options_select': [
-                ('pigpio_any', 'Any Pin, <= 40 kHz'),
-                ('pigpio_hardware', 'Hardware Pin, <= 30 MHz')
-            ],
-            'name': lazy_gettext('Library'),
-            'phrase': 'Which method to produce the PWM signal (hardware pins can produce higher frequencies)'
-        },
-        {
-            'id': 'pwm_hertz',
-            'type': 'integer',
-            'default_value': 22000,
-            'required': True,
-            'constraints_pass': constraints_pass_positive_value,
-            'name': lazy_gettext('Frequency (Hertz)'),
-            'phrase': 'The Herts to output the PWM signal (0 - 70,000)'
-        },
-        {
             'id': 'pwm_invert_signal',
             'type': 'bool',
             'default_value': False,
@@ -173,8 +213,7 @@ class OutputModule(AbstractOutput):
     def __init__(self, output, testing=False):
         super().__init__(output, testing=testing, name=__name__)
 
-        self.pigpio = None
-        self.pwm_output = None
+        self.publish = None
 
         output_channels = db_retrieve_table_daemon(
             OutputChannel).filter(OutputChannel.output_id == self.output.unique_id).all()
@@ -182,44 +221,14 @@ class OutputModule(AbstractOutput):
             OUTPUT_INFORMATION['custom_channel_options'], output_channels)
 
     def initialize(self):
-        import pigpio
+        import paho.mqtt.publish as publish
 
-        self.pigpio = pigpio
+        self.publish = publish
 
         self.setup_output_variables(OUTPUT_INFORMATION)
-
-        error = []
-        if self.options_channels['pin'][0] is None:
-            error.append("Pin must be set")
-        if self.options_channels['pwm_hertz'][0] <= 0:
-            error.append("PWM Hertz must be a positive value")
-        if error:
-            for each_error in error:
-                self.logger.error(each_error)
-            return
+        self.output_setup = True
 
         try:
-            self.pwm_output = self.pigpio.pi()
-            if not self.pwm_output.connected:
-                self.logger.error("Could not connect to pigpiod")
-                self.pwm_output = None
-                return
-            if self.options_channels['pwm_library'][0] == 'pigpio_hardware':
-                self.pwm_output.hardware_PWM(
-                    self.options_channels['pin'][0], self.options_channels['pwm_hertz'][0], 0)
-                self.logger.info("Output setup on Hardware pin {pin} at {hz} Hertz".format(
-                    pin=self.options_channels['pin'][0],
-                    hz=self.options_channels['pwm_hertz'][0]))
-            elif self.options_channels['pwm_library'][0] == 'pigpio_any':
-                self.pwm_output.set_PWM_frequency(
-                    self.options_channels['pin'][0], self.options_channels['pwm_hertz'][0])
-                self.logger.info("Output setup on Any pin {pin} at {hz} Hertz".format(
-                    pin=self.options_channels['pin'][0],
-                    hz=self.options_channels['pwm_hertz'][0]))
-
-            self.output_setup = True
-
-            state_string = ""
             if self.options_channels['state_startup'][0] == 0:
                 self.output_switch('off')
                 self.logger.info("PWM turned off (0 % duty cycle)")
@@ -254,63 +263,61 @@ class OutputModule(AbstractOutput):
                         "duty cycle could not be found in the measurement "
                         "database")
         except Exception as except_msg:
-            self.logger.exception("Output was unable to be setup on pin {pin}: {err}".format(
-                pin=self.options_channels['pin'][0], err=except_msg))
+            self.logger.exception("Output was unable to be setup: {err}".format(err=except_msg))
 
-    def output_switch(self, state, output_type=None, amount=None, output_channel=None):
+    def output_switch(self, state, output_type=None, amount=None, output_channel=0):
         measure_dict = copy.deepcopy(measurements_dict)
 
-        if state == 'on':
-            if self.options_channels['pwm_invert_signal'][0]:
-                amount = 100.0 - abs(amount)
-        elif state == 'off':
-            if self.options_channels['pwm_invert_signal'][0]:
-                amount = 100
-            else:
-                amount = 0
+        try:
+            auth_dict = None
+            if self.options_channels['login'][0]:
+                if not self.options_channels['password'][0]:
+                    self.options_channels['password'][0] = None
+                auth_dict = {
+                    "username": self.options_channels['username'][0],
+                    "password": self.options_channels['password'][0]
+                }
 
-        if self.options_channels['pwm_library'][0] == 'pigpio_hardware':
-            self.pwm_output.hardware_PWM(
-                self.options_channels['pin'][0],
-                self.options_channels['pwm_hertz'][0],
-                int(amount * 10000))
-        elif self.options_channels['pwm_library'][0] == 'pigpio_any':
-            self.pwm_output.set_PWM_frequency(
-                self.options_channels['pin'][0], self.options_channels['pwm_hertz'][0])
-            self.pwm_output.set_PWM_range(self.options_channels['pin'][0], 1000)
-            self.pwm_output.set_PWM_dutycycle(
-                self.options_channels['pin'][0], self.duty_cycle_to_pigpio_value(amount))
-
-        self.logger.debug("Duty cycle set to {dc:.2f} %".format(dc=amount))
-
-        if self.options_channels['pwm_invert_stored_signal'][0]:
-            amount = 100.0 - abs(amount)
-
-        measure_dict[0]['value'] = amount
-        add_measurements_influxdb(self.unique_id, measure_dict)
-
-        return "success"
-
-    def is_on(self, output_channel=None):
-        if self.is_setup():
-            try:
-                response = self.pwm_output.get_PWM_dutycycle(self.options_channels['pin'][0])
-
-                if self.options_channels['pwm_library'][0] == 'pigpio_hardware':
-                    duty_cycle = response / 10000
-                elif self.options_channels['pwm_library'][0] == 'pigpio_any':
-                    duty_cycle = self.pigpio_value_to_duty_cycle(response)
+            if state == 'on':
+                if self.options_channels['pwm_invert_signal'][0]:
+                    amount = 100.0 - abs(amount)
+            elif state == 'off':
+                if self.options_channels['pwm_invert_signal'][0]:
+                    amount = 100
                 else:
-                    return None
-                if duty_cycle > 0:
-                    return duty_cycle
-            except self.pigpio.error as error:
-                if error.value == 'GPIO is not in use for PWM':
-                    pass  # How duty cycle of 0 is returned now in pigpio (*raises eyebrow*)
-            except Exception as err:
-                self.logger.error("Error getting PWM state: {}".format(err))
+                    amount = 0
 
-            return False
+            self.publish.single(
+                self.options_channels['topic'][0],
+                amount,
+                hostname=self.options_channels['hostname'][0],
+                port=self.options_channels['port'][0],
+                client_id=self.options_channels['clientid'][0],
+                keepalive=self.options_channels['keepalive'][0],
+                auth=auth_dict,
+                transport='websockets' if self.options_channels['mqtt_use_websockets'][0] else 'tcp')
+
+            self.logger.debug("Duty cycle set to {dc:.2f} %".format(dc=amount))
+
+            if self.options_channels['pwm_invert_stored_signal'][0]:
+                amount = 100.0 - abs(amount)
+
+            self.output_states[output_channel] = amount
+
+            measure_dict[0]['value'] = amount
+            add_measurements_influxdb(self.unique_id, measure_dict)
+
+            return "success"
+        except Exception as e:
+            self.logger.error("State change error: {}".format(e))
+            return
+
+    def is_on(self, output_channel=0):
+        if self.is_setup():
+            if output_channel is not None and output_channel in self.output_states:
+                return self.output_states[output_channel]
+            else:
+                return self.output_states
 
     def is_setup(self):
         return self.output_setup
@@ -323,24 +330,6 @@ class OutputModule(AbstractOutput):
             elif self.options_channels['state_shutdown'][0] == 'set_duty_cycle':
                 self.output_switch('on', amount=self.options_channels['shutdown_value'][0])
         self.running = False
-
-    @staticmethod
-    def duty_cycle_to_pigpio_value(duty_cycle):
-        pigpio_value = int((abs(duty_cycle) / 100.0) * 1000)
-        if pigpio_value > 1000:
-            pigpio_value = 1000
-        elif pigpio_value < 0:
-            pigpio_value = 0
-        return pigpio_value
-
-    @staticmethod
-    def pigpio_value_to_duty_cycle(pigpio_value):
-        duty_cycle = (abs(pigpio_value) / 1000.0) * 100
-        if duty_cycle > 100:
-            duty_cycle = 100
-        elif duty_cycle < 0:
-            duty_cycle = 0
-        return duty_cycle
 
     def set_duty_cycle(self, args_dict):
         if 'duty_cycle' not in args_dict:

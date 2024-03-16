@@ -259,7 +259,7 @@ case "${1:-''}" in
     'update-alembic')
         printf "\n#### Upgrading Mycodo database with alembic (if needed)\n"
         cd "${MYCODO_PATH}"/alembic_db || return
-        "${MYCODO_PATH}"/env/bin/alembic upgrade head
+        "${MYCODO_PATH}"/env/bin/python -m alembic upgrade head
     ;;
     'update-alembic-post')
         printf "\n#### Executing post-alembic script\n"
@@ -321,8 +321,8 @@ case "${1:-''}" in
         /bin/bash "${MYCODO_PATH}"/mycodo/scripts/upgrade_commands.sh build-pigpiod
         /bin/bash "${MYCODO_PATH}"/mycodo/scripts/upgrade_commands.sh disable-pigpiod
         /bin/bash "${MYCODO_PATH}"/mycodo/scripts/upgrade_commands.sh enable-pigpiod-high
-        mkdir -p /opt/mycodo
-        touch /opt/mycodo/pigpio_installed
+        mkdir -p /opt/Mycodo
+        touch /opt/Mycodo/pigpio_installed
     ;;
     'uninstall-pigpiod')
         printf "\n#### Uninstalling pigpiod\n"
@@ -339,7 +339,7 @@ case "${1:-''}" in
         rm -rf ./PIGPIO
         rm -rf pigpio.tar.gz
         touch /etc/systemd/system/pigpiod_uninstalled.service
-        rm -f /opt/mycodo/pigpio_installed
+        rm -f /opt/Mycodo/pigpio_installed
     ;;
     'disable-pigpiod')
         printf "\n#### Disabling installed pigpiod startup script\n"
