@@ -13,7 +13,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, debian:bullseye, debian:bookworm]
+        os: [ubuntu-latest, debian-bullseye, debian-bookworm]
     steps:
       - uses: actions/checkout@v2
       - name: Set up Python 3.9
