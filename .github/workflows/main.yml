@@ -10,41 +10,23 @@ on:
 
 jobs:
   build:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [debian-bullseye, debian-bookworm]
+    runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v2
       - name: Set up Python 3.9
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v1
         with:
           python-version: 3.9
-      - name: Workaround for https://github.com/actions/runner-images/issues/675  
+      - name: Workaround for https://github.com/actions/runner-images/issues/675
         run: |
-          # Only required for Debian based OS (Bullseye, Bookworm)
-          if [[ ${{ runner.os }} == 'Linux' ]]; then
-            sudo gem install apt-spy2
-            sudo apt-spy2 fix --commit --launchpad --country=US
-          fi
+          sudo gem install apt-spy2
+          sudo apt-spy2 fix --commit --launchpad --country=US
       - name: Install dependencies
         run: |
-          # Update and install base dependencies
-          sudo apt-get update && sudo apt-get install -y apt-transport-https ca-certificates curl gnupg2 software-properties-common
-          
-          # Configure package sources based on OS
-          if [[ ${{ runner.os }} == 'ubuntu-latest' ]]; then
-            # Ubuntu
-            sudo add-apt-repository universe
-            sudo add-apt-repository ppa:ubuntu-toolchain-r/test
-          else
-            # Debian (Bullseye, Bookworm)
-            sudo echo "deb http://deb.debian.org/debian ${{ matrix.os }} main contrib non-free" | sudo tee /etc/apt/sources.list
-            sudo echo "deb-src http://deb.debian.org/debian ${{ matrix.os }} main contrib non-free" | sudo tee /etc/apt/sources.list.d/source.list
-          fi
-          
-          # Update and install remaining dependencies
-          sudo apt-get update && sudo apt-get upgrade -y
+          sudo apt-get update ; sudo apt-get clean ; sudo apt-get autoremove ; sudo apt-get install libuv1-dev ; sudo apt --fix-broken install ; sudo apt-get update && sudo apt-get upgrade
+          sudo dpkg --configure -a
+          sudo apt-get install -f
+          sudo bash mycodo/scripts/upgrade_commands.sh update-apt
           sudo apt install -y libatlas-base-dev libboost-python-dev gawk git libffi-dev libi2c-dev nginx python3-dev sqlite3 swig
           sudo bash mycodo/scripts/upgrade_commands.sh update-packages
           git clone --recursive https://github.com/WiringPi/WiringPi-Python.git && cd WiringPi-Python && git submodule update --init && cd WiringPi && ./build && cd ../..
