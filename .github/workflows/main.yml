@@ -12,7 +12,7 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@mycodo@a43d5f902f636716db9eceb65a078776cb32faba
+      - uses: actions/checkout/kizniche/mycodo@a43d5f902f636716db9eceb65a078776cb32faba
       - name: Set up Python 3.9
         uses: actions/setup-python@v5
         with:
